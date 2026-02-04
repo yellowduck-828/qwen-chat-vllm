@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Qwen Web Chat</title>
+    <script>
+      // MathJax config: render TeX in $...$ / $$...$$ blocks
+      window.MathJax = {
+        tex: {
+          inlineMath: [
+            ["$", "$"],
+            ["\\(", "\\)"],
+          ],
+          displayMath: [
+            ["$$", "$$"],
+            ["\\[", "\\]"],
+          ],
+        },
+        svg: { fontCache: "global" },
+      };
+    </script>
+    <script
+      id="mathjax-script"
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+      async
+    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: #f5f7fb;
+        color: #111;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        padding: 1rem 2rem;
+        background: #111827;
+        color: #fff;
+        font-size: 1.1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 1rem;
+        max-width: 960px;
+        width: 100%;
+        margin: 0 auto;
+        min-height: 0; /* 允许子元素正确滚动 */
+      }
+      #chat-log {
+        flex: 1;
+        min-height: 0;
+        background: #fff;
+        border-radius: 12px;
+        padding: 1rem;
+        overflow-y: auto;
+        box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
+      }
+      .msg {
+        margin-bottom: 1rem;
+        padding: 0.85rem 1rem;
+        border-radius: 10px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+      }
+      .msg.user {
+        background: #2563eb;
+        color: #fff;
+        align-self: flex-end;
+      }
+      .msg.assistant,
+      .msg.ai {
+        background: #f1f5f9;
+        color: #0f172a;
+      }
+      .msg.thinking {
+        background: #fff7ed;
+        color: #92400e;
+        font-style: italic;
+      }
+      .msg.error {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+      form {
+        display: flex;
+        gap: 0.75rem;
+        margin-top: 1rem;
+      }
+      textarea {
+        flex: 1;
+        border-radius: 10px;
+        border: 1px solid #cbd5f5;
+        padding: 0.75rem;
+        resize: none;
+        min-height: 80px;
+        font-size: 1rem;
+      }
+      button {
+        padding: 0 1.5rem;
+        border: none;
+        border-radius: 10px;
+        background: #10b981;
+        color: #fff;
+        font-size: 1rem;
+        cursor: pointer;
+        width: 140px;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .stop-btn {
+        background: #ef4444;
+      }
+      .status {
+        margin-top: 0.5rem;
+        font-size: 0.9rem;
+        color: #475569;
+      }
+      .session-bar {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        margin: 0.5rem auto 0;
+        width: 100%;
+        max-width: 960px;
+        padding: 0 1rem;
+      }
+      .session-select {
+        flex: 1;
+        padding: 0.45rem 0.75rem;
+        border-radius: 8px;
+        border: 1px solid #cbd5f5;
+        background: #fff;
+      }
+      .session-btn {
+        padding: 0.45rem 0.9rem;
+        border: none;
+        border-radius: 8px;
+        background: #e5e7eb;
+        cursor: pointer;
+        transition: transform 0.08s ease, box-shadow 0.12s ease, filter 0.12s ease;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      }
+      .session-btn.primary {
+        background: #2563eb;
+        color: #fff;
+      }
+      .session-btn.danger {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+      .session-btn:active {
+        transform: translateY(1px) scale(0.99);
+        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.16) inset;
+        filter: brightness(0.97);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span>🤖 Qwen Web 前端</span>
+      <small>vLLM + FastAPI</small>
+    </header>
+
+    <div class="session-bar">
+      <select id="session-select" class="session-select"></select>
+      <button id="new-session-btn" class="session-btn primary">新建会话</button>
+      <button id="rename-session-btn" class="session-btn">重命名</button>
+      <button id="delete-session-btn" class="session-btn danger">删除</button>
+    </div>
+
+    <main>
+      <section id="chat-log"></section>
+
+      <form id="chat-form">
+        <textarea
+          id="chat-input"
+          placeholder="输入内容，然后按 Enter 或点击发送"
+        ></textarea>
+        <button type="submit" id="send-btn">发送</button>
+        <button type="button" id="stop-btn" class="stop-btn" disabled>中断</button>
+      </form>
+      <div class="status" id="status"></div>
+      <label class="status" style="display: flex; gap: 0.4rem; align-items: center">
+        <input type="checkbox" id="thinking-toggle" />
+        <span>开启思考模式 (thinking)</span>
+      </label>
+    </main>
+
+    <script>
+      const chatLog = document.getElementById("chat-log");
+      const chatForm = document.getElementById("chat-form");
+      const chatInput = document.getElementById("chat-input");
+      const statusEl = document.getElementById("status");
+      const thinkingToggle = document.getElementById("thinking-toggle");
+      const sendBtn = document.getElementById("send-btn");
+      const stopBtn = document.getElementById("stop-btn");
+      const sessionSelect = document.getElementById("session-select");
+      const newSessionBtn = document.getElementById("new-session-btn");
+      const deleteSessionBtn = document.getElementById("delete-session-btn");
+      const renameSessionBtn = document.getElementById("rename-session-btn");
+      const HISTORY_LIMIT = 200;
+      let sessions = [];
+      let activeSessionId = null;
+      let currentController = null;
+
+      // 计算 API 基础地址：URL 参数 backend 优先，其次 localStorage，最后同源
+      const params = new URLSearchParams(window.location.search);
+      const backendFromQuery = params.get("backend");
+      const savedBackend = localStorage.getItem("apiBase");
+      const apiBase = (backendFromQuery || savedBackend || window.location.origin).replace(/\/$/, "");
+      localStorage.setItem("apiBase", apiBase);
+
+      // 恢复/保存思考模式选择
+      const savedThinking = localStorage.getItem("enableThinking");
+      if (savedThinking !== null) {
+        thinkingToggle.checked = savedThinking === "true";
+      }
+      const updateStatus = () => {
+        statusEl.textContent = `当前 API: ${apiBase}/v1/chat/completions | 思考模式: ${
+          thinkingToggle.checked ? "开" : "关"
+        }`;
+      };
+      updateStatus();
+      thinkingToggle.addEventListener("change", () => {
+        localStorage.setItem("enableThinking", thinkingToggle.checked ? "true" : "false");
+        updateStatus();
+      });
+
+      function escapeHtml(text) {
+        return text
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      function renderMath(el) {
+        if (window.MathJax && typeof MathJax.typesetPromise === "function") {
+          MathJax.typesetPromise([el]).catch((err) => console.error("MathJax render error", err));
+        }
+      }
+
+      function renderMarkdown(content) {
+        const text = typeof content === "string" ? content : String(content ?? "");
+        const mdHtml = marked.parse(text);
+        return DOMPurify.sanitize(mdHtml);
+      }
+
+      function setMessageContent(div, content) {
+        try {
+          const safe = renderMarkdown(content);
+          div.innerHTML = safe;
+        } catch (e) {
+          console.error("Render markdown failed, fallback to textContent", e);
+          div.textContent = typeof content === "string" ? content : String(content ?? "");
+        }
+        renderMath(div);
+      }
+
+      function setTextContent(div, content) {
+        div.textContent = typeof content === "string" ? content : String(content ?? "");
+      }
+
+      function setMessageContentToEl(el, content) {
+        try {
+          const safe = renderMarkdown(content);
+          el.innerHTML = safe;
+        } catch (e) {
+          console.error("Render markdown failed, fallback to textContent", e);
+          el.textContent = typeof content === "string" ? content : String(content ?? "");
+        }
+        renderMath(el);
+      }
+
+      // 提取文本工具：兼容 string / list / {text} / {reasoning}
+      function takeText(val) {
+        if (typeof val === "string") return val;
+        if (Array.isArray(val)) {
+          return val
+            .map((item) => {
+              if (typeof item === "string") return item;
+              if (item && typeof item === "object") {
+                if (typeof item.text === "string") return item.text;
+                if (typeof item.reasoning === "string") return item.reasoning;
+                if (typeof item.reasoning_content === "string") return item.reasoning_content;
+              }
+              return "";
+            })
+            .join("");
+        }
+        if (val && typeof val === "object") {
+          if (typeof val.text === "string") return val.text;
+          if (typeof val.content === "string") return val.content;
+          if (typeof val.reasoning === "string") return val.reasoning;
+          if (typeof val.reasoning_content === "string") return val.reasoning_content;
+        }
+        return "";
+      }
+
+      function loadSessions() {
+        const saved = localStorage.getItem("chatSessions");
+        if (saved) {
+          try {
+            const obj = JSON.parse(saved);
+            sessions = Array.isArray(obj.sessions) ? obj.sessions : [];
+            activeSessionId = obj.activeSessionId || (sessions[0] && sessions[0].id);
+          } catch (e) {
+            sessions = [];
+          }
+        }
+        // 兼容旧数据，确保 chat_id 存在
+        sessions = sessions.map((s, idx) => ({
+          ...s,
+          chat_id: s.chat_id || s.id || `chat-${idx + 1}`,
+          conversation: Array.isArray(s.conversation) ? s.conversation : [],
+        }));
+        if (!sessions.length) {
+          const id = `s-${Date.now()}`;
+          sessions = [{ id, chat_id: id, title: "新会话", conversation: [] }];
+          activeSessionId = id;
+          saveSessions();
+        }
+        if (!activeSessionId && sessions[0]) {
+          activeSessionId = sessions[0].id;
+        }
+        // 自动从已有消息生成标题（兼容旧数据）
+        let mutated = false;
+        sessions = sessions.map((s) => {
+          if (isDefaultTitle(s.title) && Array.isArray(s.conversation) && s.conversation.length) {
+            const autoTitle = deriveTitleFromMessages(s.conversation);
+            if (autoTitle) {
+              mutated = true;
+              return { ...s, title: autoTitle };
+            }
+          }
+          return s;
+        });
+        if (mutated) saveSessions();
+      }
+
+      function saveSessions() {
+        localStorage.setItem(
+          "chatSessions",
+          JSON.stringify({ sessions, activeSessionId })
+        );
+      }
+
+      function deriveTitleFromContent(text) {
+        const trimmed = (text || "").trim();
+        if (!trimmed) return "新会话";
+        const maxLen = 18;
+        return trimmed.length > maxLen ? trimmed.slice(0, maxLen) + "…" : trimmed;
+      }
+
+      function deriveTitleFromMessages(msgs) {
+        if (!Array.isArray(msgs) || !msgs.length) return null;
+        // 优先取第一条用户消息，其次首条消息内容
+        const firstUser = msgs.find((m) => m?.role === "user" && m.content);
+        const firstMsg = firstUser || msgs[0];
+        const text = firstMsg?.content || "";
+        const title = deriveTitleFromContent(text);
+        return title;
+      }
+
+      function isDefaultTitle(title) {
+        return !title || title === "新会话" || /^会话\s*\d+$/i.test(title);
+      }
+
+      function currentSession() {
+        return sessions.find((s) => s.id === activeSessionId);
+      }
+
+      function renderSessionsSelect() {
+        sessionSelect.innerHTML = "";
+        sessions.forEach((s) => {
+          const opt = document.createElement("option");
+          opt.value = s.id;
+          opt.textContent = s.title;
+          if (s.id === activeSessionId) opt.selected = true;
+          sessionSelect.appendChild(opt);
+        });
+      }
+
+      function renderChatFromSession() {
+        chatLog.innerHTML = "";
+        const session = currentSession();
+        if (!session) return;
+        session.conversation.forEach((m) => renderMessage(m));
+        autoScrollIfNeeded(true);
+      }
+
+      async function refreshHistory(session, allowEmpty = false) {
+        const oldConv = Array.isArray(session?.conversation) ? session.conversation : [];
+        try {
+          const res = await fetch(`/api/history/${encodeURIComponent(session.chat_id)}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          const msgs = Array.isArray(data.messages) ? data.messages : null;
+          if (msgs !== null) {
+            const oldLen = oldConv?.length || 0;
+            const shouldReplace =
+              (msgs.length > oldLen) ||
+              (msgs.length === 0 && allowEmpty && oldLen === 0);
+            if (shouldReplace) {
+              const merged = msgs.map((m, idx) => {
+                const old = oldConv[idx] || {};
+                const mergedMsg = { ...m };
+                // 若后端未返回 reasoning，而本地已有则保留本地的思考展示
+                if (!mergedMsg.reasoning && old.reasoning) {
+                  mergedMsg.reasoning = old.reasoning;
+                }
+                if (typeof old.reasoning_open === "boolean") {
+                  mergedMsg.reasoning_open = old.reasoning_open;
+                }
+                return mergedMsg;
+              });
+              session.conversation = merged;
+              // 若仍是默认标题且已有历史，自动用首条消息生成标题
+              if (isDefaultTitle(session.title)) {
+                const autoTitle = deriveTitleFromMessages(merged);
+                if (autoTitle) {
+                  session.title = autoTitle;
+                }
+              }
+              saveSessions();
+              if (session.id === activeSessionId) {
+                renderChatFromSession();
+              }
+              renderSessionsSelect();
+            }
+          }
+        } catch (e) {
+          console.error("加载历史失败", e);
+        }
+      }
+
+      async function setActiveSession(id) {
+        activeSessionId = id;
+        saveSessions();
+        renderSessionsSelect();
+        const session = currentSession();
+        if (session) {
+          await refreshHistory(session, true);
+          // 即便后端无历史，也要清空界面
+          renderChatFromSession();
+        } else {
+          renderChatFromSession();
+        }
+      }
+
+      function createSession() {
+        const title = "新会话";
+        const id = `s-${Date.now()}`;
+        sessions.push({ id, chat_id: id, title, conversation: [] });
+        setActiveSession(id);
+        saveSessions();
+      }
+
+      function deleteSession(id) {
+        // 先尝试通知后端删除持久化会话
+        fetch(`/api/history/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {
+          // 忽略删除失败，前端仍清理本地记录
+        });
+        if (sessions.length === 1) {
+          // reset the only session
+          sessions[0].conversation = [];
+          sessions[0].title = "新会话";
+          // 保持 chat_id，不清空会话标识
+          setActiveSession(sessions[0].id);
+          saveSessions();
+          return;
+        }
+        sessions = sessions.filter((s) => s.id !== id);
+        if (!sessions.length) {
+          createSession();
+          return;
+        }
+        if (!sessions.find((s) => s.id === activeSessionId)) {
+          activeSessionId = sessions[0].id;
+        }
+        saveSessions();
+        renderSessionsSelect();
+        renderChatFromSession();
+      }
+
+      // 历史由后端管理，此处仅用于回显，不再发送
+      function getHistoryMessages() {
+        const session = currentSession();
+        if (!session) return [];
+        const conv = session.conversation;
+        if (conv.length <= HISTORY_LIMIT) return [...conv];
+        return conv.slice(conv.length - HISTORY_LIMIT);
+      }
+
+      function addMessage(role, content) {
+        const div = document.createElement("div");
+        div.className = `msg ${role}`;
+        setMessageContent(div, content);
+        chatLog.appendChild(div);
+        autoScrollIfNeeded(true);
+        return div;
+      }
+
+      function nearBottom() {
+        const threshold = 200;
+        return chatLog.scrollHeight - chatLog.clientHeight - chatLog.scrollTop < threshold;
+      }
+
+      function autoScrollIfNeeded(force = false, behavior = "smooth") {
+        // 用 rAF 确保 DOM 更新后再滚动，避免跳闪
+        requestAnimationFrame(() => {
+          if (force || nearBottom()) {
+            chatLog.scrollTo({ top: chatLog.scrollHeight, behavior });
+          }
+        });
+      }
+
+      function setLoading(isLoading) {
+        sendBtn.disabled = isLoading;
+        stopBtn.disabled = !isLoading;
+      }
+
+      function renderMessage(message) {
+        const role = message.role || "assistant";
+        const content = message.content || "";
+        const reasoning = message.reasoning || "";
+        if (role === "assistant" && reasoning) {
+          const thinkingBubble = addThinkingBubble(
+            "思考过程：\n" + reasoning,
+            message.reasoning_open === true
+          );
+          const details = thinkingBubble.details;
+          if (details) {
+            details.addEventListener("toggle", () => {
+              message.reasoning_open = details.open;
+              saveSessions();
+            });
+          }
+        }
+        return addMessage(role === "assistant" ? "ai" : role, content);
+      }
+
+      function addThinkingBubble(initialText, defaultOpen = false) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "msg thinking";
+        const details = document.createElement("details");
+        details.open = defaultOpen;
+        const summary = document.createElement("summary");
+        summary.textContent = "思考过程（点击展开/收起）";
+        const contentEl = document.createElement("div");
+        contentEl.style.marginTop = "0.35rem";
+        contentEl.style.whiteSpace = "pre-wrap";
+        setTextContent(contentEl, initialText);
+        details.appendChild(summary);
+        details.appendChild(contentEl);
+        wrapper.appendChild(details);
+        chatLog.appendChild(wrapper);
+        autoScrollIfNeeded(true);
+        return { wrapper, contentEl, details };
+      }
+
+      function getHistoryMessages() {
+        const session = currentSession();
+        if (!session) return [];
+        const conv = session.conversation;
+        if (conv.length <= HISTORY_LIMIT) return [...conv];
+        return conv.slice(conv.length - HISTORY_LIMIT);
+      }
+
+async function sendMessage() {
+    const input = document.getElementById("chat-input").value;
+
+    if (!input.trim()) {
+      addMessage("error", "请输入内容");
+      return;
+    }
+
+    const session = currentSession();
+    if (!session) {
+      addMessage("error", "会话未初始化");
+      return;
+    }
+
+    addMessage("user", input.trim());
+    session.conversation.push({ role: "user", content: input.trim() });
+    // 若仍是默认标题，用首条用户内容更新标题
+    if (isDefaultTitle(session.title)) {
+      session.title = deriveTitleFromContent(input);
+      renderSessionsSelect();
+    }
+    saveSessions();
+    chatInput.value = "";
+    // 在用户消息下方添加“正在思考……”占位（可折叠）
+    let thinkingBubble = addThinkingBubble("正在思考……");
+    let thinkingDiv = thinkingBubble.wrapper;
+    let thinkingContentEl = thinkingBubble.contentEl;
+    let thinkingDetails = thinkingBubble.details;
+    let reasoningOpenState = thinkingDetails ? thinkingDetails.open : false;
+    if (thinkingDetails) {
+      thinkingDetails.addEventListener("toggle", () => {
+        reasoningOpenState = thinkingDetails.open;
+      });
+    }
+    let reasoningReceived = false;
+    let contentReceived = false;
+    // 助手回答占位
+    let answerDiv = addMessage("ai", "");
+    let answerBuffer = "";
+    let reasoningBuffer = "";
+
+    // 处理并发：若已有请求在进行，先中断
+    if (currentController) {
+      currentController.abort();
+    }
+    const controller = new AbortController();
+    currentController = controller;
+    setLoading(true);
+    statusEl.textContent = "正在请求远程模型...";
+
+    try {
+      const payload = {
+        chat_id: session.chat_id,
+        new_message: input,
+        enable_thinking: thinkingToggle.checked,
+        stream: true,
+      };
+      const response = await fetch(`${apiBase}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffered = "";
+      let reachedDone = false;
+
+      while (true) {
+        const readResult = await reader.read();
+        if (readResult.done) break;
+        buffered += decoder.decode(readResult.value || new Uint8Array(), { stream: true });
+
+        // 拆分行（兼容 \n 或 \n\n）
+        const segments = buffered.split(/\n\n|\n/);
+        // 保留最后一个未完成段在 buffer
+        buffered = segments.pop() ?? "";
+
+        for (const seg of segments) {
+          const chunk = seg.trim();
+          if (!chunk) continue;
+          const dataText = chunk.startsWith("data:") ? chunk.replace(/^data:\s*/, "") : chunk;
+          if (dataText === "[DONE]") {
+            reachedDone = true;
+            break;
+          }
+          try {
+            const evt = JSON.parse(dataText);
+            if (evt.error) {
+              addMessage("error", evt.error);
+              contentReceived = true;
+              reasoningReceived = true;
+              continue;
+            }
+            const deltaReason =
+              takeText(evt.delta_reasoning) ||
+              takeText(evt.delta?.reasoning_content) ||
+              takeText(evt.delta?.reasoning) ||
+              // 部分实现把 reasoning 放在 content 列表的 reasoning 类型里
+              takeText(
+                Array.isArray(evt.delta?.content)
+                  ? evt.delta.content.filter((c) => c?.type === "reasoning" || c?.type === "reasoning_content")
+                  : ""
+              );
+
+            const delta =
+              takeText(evt.delta_content) ||
+              takeText(evt.delta?.content) ||
+              takeText(evt.delta);
+
+            if (deltaReason && thinkingToggle.checked) {
+              reasoningReceived = true;
+              reasoningBuffer += deltaReason;
+              if (thinkingContentEl) {
+                setTextContent(thinkingContentEl, `思考过程：\n${reasoningBuffer}`);
+                autoScrollIfNeeded(true);
+              }
+            }
+
+            if (delta) {
+              contentReceived = true;
+              // 如果没有思考内容而仅有回答，移除占位
+              if (!reasoningReceived && thinkingDiv && thinkingDiv.parentNode) {
+                thinkingDiv.parentNode.removeChild(thinkingDiv);
+                thinkingDiv = null;
+              }
+              // 在未开启思考时避免把 reasoning 当正文
+              if (!thinkingToggle.checked && deltaReason && delta === deltaReason) {
+                // skip: this chunk仅包含思考内容
+              } else {
+                answerBuffer += delta;
+                if (answerDiv) {
+                  setTextContent(answerDiv, answerBuffer);
+                  autoScrollIfNeeded(true);
+                }
+              }
+            }
+          } catch (e) {
+            console.error("Failed to parse stream chunk", e, dataText);
+          }
+        }
+        if (reachedDone) break;
+      }
+
+      // 流结束后渲染最终 Markdown（包括公式）
+      if (reasoningReceived && thinkingContentEl) {
+        setMessageContentToEl(thinkingContentEl, `思考过程：\n${reasoningBuffer}`);
+        autoScrollIfNeeded(true);
+      } else if (thinkingDiv && thinkingDiv.parentNode) {
+        thinkingDiv.parentNode.removeChild(thinkingDiv);
+        thinkingDiv = null;
+      }
+      if (contentReceived && answerDiv) {
+        setMessageContent(answerDiv, answerBuffer);
+        autoScrollIfNeeded(true);
+        const assistantMsg = { role: "assistant", content: answerBuffer };
+        if (thinkingToggle.checked && reasoningReceived) {
+          assistantMsg.reasoning = reasoningBuffer;
+          assistantMsg.reasoning_open = reasoningOpenState;
+        }
+        session.conversation.push(assistantMsg);
+        saveSessions();
+        // 同步一次后端历史，确保前端与后端一致（若后端空则不覆盖）
+        await refreshHistory(session, false);
+      } else if (answerDiv && answerDiv.parentNode) {
+        answerDiv.parentNode.removeChild(answerDiv);
+      }
+
+      if (!contentReceived && !reasoningReceived) {
+        addMessage("error", "流式响应为空");
+      }
+    } catch (err) {
+      if (err.name === "AbortError") {
+        // 保留已生成的内容
+        if (reasoningBuffer && thinkingContentEl) {
+          setMessageContentToEl(thinkingContentEl, `思考过程：\n${reasoningBuffer}`);
+        } else if (thinkingDiv && thinkingDiv.parentNode) {
+          setTextContent(thinkingContentEl || thinkingDiv, "已中断");
+        }
+        if (answerDiv) {
+          if (answerBuffer) {
+            setMessageContent(answerDiv, answerBuffer);
+          } else {
+            setTextContent(answerDiv, "(已中断，暂无内容)");
+          }
+        }
+        // 将已生成内容落盘到本地会话，避免刷新丢失
+        const hasContent = Boolean(answerBuffer || reasoningBuffer);
+        if (hasContent) {
+          const assistantMsg = {
+            role: "assistant",
+            content: answerBuffer || "(已中断，暂无内容)",
+            interrupted: true,
+          };
+          if (thinkingToggle.checked && reasoningReceived) {
+            assistantMsg.reasoning = reasoningBuffer;
+            assistantMsg.reasoning_open = reasoningOpenState;
+          }
+          session.conversation.push(assistantMsg);
+          saveSessions();
+        }
+        addMessage("error", "请求已中断，已保留已生成内容");
+        autoScrollIfNeeded(true);
+        statusEl.textContent = "已中断";
+      } else {
+        if (thinkingDiv && thinkingDiv.parentNode) {
+          thinkingDiv.parentNode.removeChild(thinkingDiv);
+        }
+        if (answerDiv && answerDiv.parentNode) {
+          answerDiv.parentNode.removeChild(answerDiv);
+        }
+        addMessage("error", "错误：" + err.message);
+        statusEl.textContent = "请求失败";
+      }
+    }
+    currentController = null;
+    setLoading(false);
+    thinkingBubble = null;
+    chatInput.focus();
+}
+
+      chatForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        sendMessage();
+      });
+
+      chatInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          sendMessage();
+        }
+      });
+
+      // 初始化多会话并加载历史
+      (async () => {
+        loadSessions();
+        renderSessionsSelect();
+        const session = currentSession();
+        if (session) {
+          await refreshHistory(session, true);
+        } else {
+          renderChatFromSession();
+        }
+      })();
+
+      sessionSelect.addEventListener("change", async () => {
+        await setActiveSession(sessionSelect.value);
+      });
+
+      newSessionBtn.addEventListener("click", () => {
+        createSession();
+      });
+
+      deleteSessionBtn.addEventListener("click", () => {
+        if (activeSessionId) {
+          deleteSession(activeSessionId);
+        }
+      });
+
+      renameSessionBtn.addEventListener("click", () => {
+        const session = currentSession();
+        if (!session) return;
+        const newTitle = prompt("请输入会话标题", session.title || "新会话");
+        if (newTitle === null) return; // 用户取消
+        const trimmed = newTitle.trim();
+        if (!trimmed) return;
+        session.title = trimmed;
+        saveSessions();
+        renderSessionsSelect();
+      });
+
+      stopBtn.addEventListener("click", () => {
+        if (currentController) {
+          currentController.abort();
+        }
+      });
+    </script>
+  </body>
+</html>

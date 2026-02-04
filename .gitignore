@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+venv/
+
+# Models & embeddings
+models/
+embedding_models/
+AI-ModelScope/
+paraphrase-multilingual*
+*.bin
+*.pt
+*.pth
+*.safetensors
+
+# Runtime data
+chat_sessions.json
+temp/
+logs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# System
+.DS_Store
+.Trash-0

@@ -77,9 +77,23 @@ python web_server.py
 
 ### 3️⃣ 打开前端  
 
-浏览器访问 `http://localhost:6006`（远程请替换主机 IP），可勾选思考模式查看 reasoning；多会话可自动/手动命名，历史落盘到 `chat_sessions.json`。
+浏览器访问 `http://localhost:6006`（远程请替换主机 IP）
 
+![界面预览](images/img1.png)
 
+支持：
+- 勾选思考模式查看 reasoning；
+- 多会话管理（刷新后记录仍保留）
+- 会话可自动/手动命名，历史落盘到 `chat_sessions.json`。
+
+---
+
+## 🧠 历史与记忆
+- 持久化：内存 + `chat_sessions.json`（可用 `CHAT_SESSIONS_FILE` 指定路径）。
+- 结构：`recent_messages`（最近 2 轮=4 条）+ `memory_keywords`（更早消息的关键词摘要，最多 50 条）。
+- 写入：新消息先入 `recent_messages`，超出窗口时最旧消息压缩为关键词存入 `memory_keywords`。
+- 读取/删除：`GET/DELETE /api/history/{chat_id}`。
+- 用法：请求时附带关键词生成的 system 提示 + 最近消息，既保留语境又控长度。
 
 ---
 
